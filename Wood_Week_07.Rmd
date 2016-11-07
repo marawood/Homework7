@@ -1,0 +1,98 @@
+---
+title: "Wood_Week_07"
+author: "Mara Wood"
+date: "November 6, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r library, echo = FALSE}
+library(stringr)
+library(tidyverse)
+library(choroplethr)
+library(choroplethrMaps)
+```
+
+First, I downloaded the necessary files pertaining to the GINI data and the maternal mortality rate data.
+```{r downloads, cache = TRUE}
+mat_mor <- read_csv("http://apps.who.int/gho/athena/data/xmart.csv?target=GHO/MDG_0000000025,MDG_0000000026&profile=crosstable&filter=COUNTRY:*;YEAR:*&x-sideaxis=COUNTRY;YEAR&x-topaxis=GHO")
+
+GINI <- read_csv("http://apps.who.int/gho/athena/data/GHO/WHS9_93?filter=COUNTRY:*;REGION:*&x-sideaxis=COUNTRY&x-topaxis=GHO;YEAR&profile=crosstable&format=csv")
+
+```
+
+Then, it was necessary to clean the data from both files. For the maternity mortality rate data, I renamed the columns to make them easier to work with, stripped out all whitespace, separated the mortality rate into two additional columns (the upper bounds and the lower bounds of the mortality rate), and formatted the year column so that it had a uniform formatting throughout.   
+
+```{r clean_mat}
+colnames(mat_mor)[3:4] <- c("mortality.rate", "attended.births")
+mat_mor$mortality.rate <- str_replace_all(mat_mor$mortality.rate, " ", "")
+
+mat_mor_new <- separate(mat_mor, mortality.rate, into = c("mortality.rate", "bounds"), sep = "\\[",fill = "right")
+mat_mor_new$bounds <- str_replace_all(mat_mor_new$bounds, "\\]", "")
+mat_mor_new <- separate(mat_mor_new, bounds, into = c("lower_bound", "upper_bound"), sep = "\\-",fill = "right")
+mat_mor_new$Year <- substr(mat_mor_new$Year, 1, 4)
+```
+
+To clean the GINI data, I first needed to rename the columns to use the correct row as column names, and then removed that row, as it was not needed.  I then needed to tidy the data, and used the gather function to tidy it so that it was organized by year.  
+```{r clean_GINI}
+colnames(GINI) <-GINI[1,]
+GINI <- GINI[-1, ]
+GINI$`2013`<- str_replace_all(GINI$`2013`, " ", "")
+GINI_new <- gather(GINI, 2:25, key = "Year", value = "GINI.Value")
+```
+Next, I joined our two tables so that we could have all the data merged in one location. Iu sed an inner join since we only wanted data that had at least one of the two entries, for mortality rate or attended births. Then, I converted the necessary columns to numerics.  I then exported this file of cleaned and tidied data as a CSV file.
+```{r join}
+GINI_mat <- inner_join(GINI_new, mat_mor_new, by = c("Country", "Year" = "Country" , "Year"))
+GINI_mat$Year <- as.numeric(GINI_mat$Year)
+GINI_mat$mortality.rate <- as.numeric(GINI_mat$mortality.rate)
+GINI_mat$GINI.Value <- as.numeric(GINI_mat$GINI.Value)
+
+write.csv(GINI_mat,"/Users/Mara/Wood_Week_07/Data/GINI_mat_data.csv")
+```
+
+The two graphs I produced are below.  The first looks at the relationship between the income in a country and the maternal mortality rate.  As one would expect to see, the lower the GINI value, the higher the mortality rate.  The second graph looks at a "zoomed-in" version of the first graph, where we can more clearly see that as the GINI value increases, the mortality rate falls.  The last graph looks at the relationship between the income in a country and the number of attended births.  We see an opposite effect, as we would expect, where the number of attended births increases as the GINI value increases. 
+
+```{r graphs}
+GINI_mat_filtered <- filter(GINI_mat, GINI.Value > 50000 | attended.births < 25)
+
+#GINI and Mortality
+ggplot(data = GINI_mat, aes(GINI.Value, mortality.rate)) + geom_point() +labs(title = "GINI Value and Mortality Rate", x = "GINI Value", y = "Mortality Rate")
+
+#Zoomed in 
+ggplot(data = GINI_mat, aes(GINI.Value, mortality.rate)) + geom_point() +labs(title = "GINI Value and Mortality Rate", x = "GINI Value", y = "Mortality Rate") +coord_cartesian(xlim = c(0, 50000), ylim = c(0,1500))
+
+#GINI and Attended Births
+ggplot(data = GINI_mat, aes(GINI.Value, attended.births)) + geom_point() + labs(title = "GINI Value vs Attended Births", x = "GINI Value", y = "Attended Births") + ggrepel::geom_label_repel(aes(label = Country), data = GINI_mat_filtered, alpha = .75)
+
+```
+
+In order to create the country choropleth graph, further editing to the data was necessary.  First, all country names had to be lower case, and I also selected only the latest year of data for each country that contained mortality information.  Additionally, there were many specific countries that did not have the exact necessary name for the country_choropleth function, which had to be changed.
+```{r choro1}
+GINI_mat_2 <- dplyr::arrange(filter(GINI_mat, !(is.na(GINI_mat$mortality.rate))), desc(Year))
+GINI_mat_choro <- dplyr::distinct(GINI_mat_2, Country, .keep_all = TRUE)
+GINI_mat_choro$Country <- tolower(GINI_mat_choro$Country)
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "\\(.*\\)", "")
+GINI_mat_choro$Country <- trimws(GINI_mat_choro$Country)
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "united kingdom of great britain and northern ireland", "united kingdom")
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "republic of korea", "south korea")
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "republic of moldova", "moldova")
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "viet nam", "vietnam")
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "the former yugoslav republic of macedonia", "macedonia")
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "russian federation", "russia")
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "the the bahamas", "the bahamas")
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "congo", "republic of congo")
+GINI_mat_choro$Country <- str_replace(GINI_mat_choro$Country, "cote d'ivoire", "ivory coast")
+```
+
+After these edits, the following choropleth graph was able to be produced.  I produced two versions below, one with the continous color scale, and one with a binned color scale. 
+
+```{r choro2}
+GINI_mat_choro %>% dplyr::rename(region = Country, value = mortality.rate) %>%
+  country_choropleth(title = "World Map of Maternal Mortality", num_colors = 1) 
+
+GINI_mat_choro %>% dplyr::rename(region = Country, value = mortality.rate) %>%
+  country_choropleth(title = "World Map of Maternal Mortality", num_colors = 9) 
+```
